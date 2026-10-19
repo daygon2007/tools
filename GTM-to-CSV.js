@@ -1,73 +1,68 @@
 // Paste this script in the Console section of your browser Dev Tools.
-gtmData = [];
+(() => {
+  const txt = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
 
-var button = document.querySelector(".suite.suite-up-button.md-button.md-standard-theme.md-ink-ripple.layout-align-start-center.layout-row");
+  // Header info
+  const button = document.querySelector('.suite-up-button');
+  const crumbs = button ? button.querySelectorAll('.suite-up-button-text-secondary') : [];
+  const accountName = txt(crumbs.length > 1 ? crumbs[1] : crumbs[0]);
+  const containerName = txt(button && button.querySelector('.suite-up-text-name'));
+  const gtmId = txt(document.querySelector('.gtm-container-public-id')) ||
+    (document.body.innerText.match(/GTM-[A-Z0-9]+/) || [''])[0];
 
-// Extract the account name
-var accountNameElements = button.querySelectorAll(".suite-up-button-text-secondary");
-var accountName = '';
-if (accountNameElements.length > 1) {
-    accountName = accountNameElements[1].textContent.trim();
-} else {
-    console.log("Expected more than one .suite-up-button-text-secondary element, found less");
-}
+  // Map columns by header text
+  const headers = [...document.querySelectorAll('table.gtm-multiselect-table thead th')]
+    .map(th => txt(th).toLowerCase());
+  const col = name => headers.findIndex(h => h.includes(name));
+  const idx = {
+    name: col('name'),
+    type: col('type'),
+    triggers: col('firing'),
+    folder: col('folder'),
+    edited: col('last edited'),
+  };
+  console.log('Column map:', idx, headers);
 
-// Extract the GTM container name
-var gtmContainerNameElement = button.querySelector(".suite-up-text-name");
-var gtmContainerName = gtmContainerNameElement ? gtmContainerNameElement.textContent.trim() : '';
+  const rows = document.querySelectorAll('tr.wd-tag-row');
+  if (!rows.length) { console.error('No tag rows found (tr.wd-tag-row). Are you on the Tags list?'); return; }
 
-// GTM Container ID
-var gtmNumberElement = document.querySelector('.gtm-container-public-id.md-gtm-theme');
-var gtmNumber = gtmNumberElement ? gtmNumberElement.textContent.trim() : '';
+  const data = [...rows].map(tr => {
+    const cells = tr.querySelectorAll(':scope > td');
+    const cell = i => (i >= 0 ? cells[i] : null);
 
-document.querySelectorAll('tr[gtm-table-row]').forEach(n => {
-    const td2 = n.querySelector('td:nth-child(1)');
-    const td3 = n.querySelector('td:nth-child(2)');
-    const td4 = n.querySelector('td:nth-child(3)');
-    const td5 = n.querySelector('td:nth-child(6)');
+    // Split firing triggers from exceptions
+    const trigCell = cell(idx.triggers);
+    const exceptionChips = new Set(trigCell ? trigCell.querySelectorAll('div > label ~ gtm-trigger-chip .small-trigger-chip') : []);
+    const allChips = trigCell ? [...trigCell.querySelectorAll('.small-trigger-chip')] : [];
+    const firing = allChips.filter(c => !exceptionChips.has(c)).map(txt).join(', ');
+    const exceptions = allChips.filter(c => exceptionChips.has(c)).map(txt).join(', ');
 
-    const triggerName = td3 ? td3.textContent.trim() : '';
-    const eventType = td4 ? td4.textContent.trim() : "";
-    const firingTriggers = Array.from(n.querySelectorAll('td:nth-child(4) .small-trigger-chip')).map(conditionElement => conditionElement.textContent.trim()).join(', ');
-    const lastEdited = td5 ? td5.textContent.trim() : '';
+    const editedCell = cell(idx.edited);
+    const editedSpan = editedCell && editedCell.querySelector('span[title]');
 
-    // To find if Tag is currently paused
-    let paused = false;
-    if (td5) {
-        const visibleNodes = Array.from(td5.childNodes).filter(child => child.clientHeight > 0);
-        paused = visibleNodes.length !== 0;
-    }
+    return {
+      Account: accountName,
+      Property: containerName,
+      GTM_Container: gtmId,
+      Name: txt(cell(idx.name)),
+      Type: txt(cell(idx.type)),
+      Folder: txt(cell(idx.folder)),
+      Firing_Triggers: firing,
+      Exceptions: exceptions,
+      Last_Edited: editedSpan ? editedSpan.title : txt(editedCell),
+      Currently_Paused: tr.classList.contains('gtm-table-row--paused') || !!tr.querySelector('.pause-circle-filled-icon'),
+    };
+  });
 
-    gtmData.push({
-        Account: accountName,
-        Property: gtmContainerName,
-        GTM_Container: gtmNumber,
-        Name: triggerName,
-        Type: eventType,
-        Firing_Triggers: firingTriggers,
-        Last_Edited: lastEdited,
-        Currently_Paused: paused
-    });
-});
+  const esc = v => `"${String(v).replace(/"/g, '""')}"`;
+  const csv = [
+    Object.keys(data[0]).join(','),
+    ...data.map(o => Object.values(o).map(esc).join(',')),
+  ].join('\n');
 
-// Convert to CSV
-function convertToCSV(data) {
-    const header = Object.keys(data[0]).join(',');
-    const rows = data.map(obj => Object.values(obj).map(val => `"${String(val).replace(/"/g, '""')}"`).join(','));
-    return [header, ...rows].join('\n');
-}
-
-function downloadCSV(csvContent, filename) {
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute("download", filename);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-}
-
-const csv = convertToCSV(gtmData);
-downloadCSV(csv, "gtm_data.csv");
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+  a.download = 'gtm_data.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  console.log(`Exported ${data.length} rows`);
+})();
